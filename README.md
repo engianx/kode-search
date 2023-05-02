@@ -1,2 +1,2 @@
-# code_search
+# code-search
 Semantic code search demo
