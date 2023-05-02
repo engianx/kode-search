@@ -1,4 +1,5 @@
 import argparse
+import gzip
 
 def main():
     parser = argparse.ArgumentParser(
@@ -6,7 +7,9 @@ def main():
         description='Build semantic search index for your code base.')
 
     parser.add_argument('-v', '--version', action='version', version='%(prog)s 0.0.1')
-    parser.add_argument('--prefix', type=str, default='.kode_search', help='Prefix for the various intermidiate files.')
+    parser.add_argument('--prefix', type=str, default='.kode_search', help='Prefix for the various intermediate files.')
+    parser.add_argument('--zip', action='store_true', default=False, help='Zip the intermidiate files.')
+    parser.add_argument('--info', action='store_true', default=False, help='Show information of the intermediate files.')
 
     # arguments for source code extraction
     parser.add_argument('-p', '--parse', action='store_true', default=False, help='Parse code base and extract functions.')
@@ -25,7 +28,6 @@ def main():
     parser.add_argument('--embedding-samples', type=int, default=1000, help='Dry-run: number of samples to be used for building index.')
     parser.add_argument('--recreate-embeddings', action='store_true', default=False, help='Recreate embeddings from existing embedding file.')
     # arguments for debugging and testing embeddings
-    parser.add_argument('--embedding-info', action='store_true', default=False, help='Show information about the embeddings.')
     parser.add_argument('--show-samples', metavar='N', type=int, default=0, help='Show N samples from the embeddings.')
 
     # arguments for controlling the index
@@ -41,6 +43,12 @@ def main():
     parser.add_argument('query', nargs=argparse.REMAINDER, help='Search query (if any).')
 
     args = parser.parse_args()
+
+    # Set the open function
+    if args.zip:
+        args._open = gzip.open
+    else:
+        args._open = open
 
     if args.parse:
         from kode_search.parse import parse

@@ -1,10 +1,12 @@
 import fnmatch
 import git
-import gzip
 import os
 import pickle
+import random
 import sys
 
+from collections import Counter
+from pprint import pprint
 from tree_sitter_languages import get_parser
 from tqdm import tqdm
 
@@ -104,6 +106,33 @@ def _extract_entities(args, tree, source_file, source_code):
             nodes_to_visit.extend(node.children)
     return entities
 
+# show the information of the parsed entities
+def _show_info(args, entities_file):
+    with args._open(entities_file, 'rb') as f:
+        entities = pickle.load(f)
+    print('Number of entities: {}'.format(len(entities)))
+
+    # Print the number classes and functions
+    num_class = len([entity for entity in entities if entity['type'] == 'class_declaration'])
+    num_function = len([entity for entity in entities if entity['type'] == 'function_definition'])
+    print('\tclasses: {}'.format(num_class))
+    print('\tfunctions: {}'.format(num_function))
+    
+    print("Code length distribution:")
+    code_length = [len(entity['code']) for entity in entities]
+    # print the distribution of the code length
+    print('Length\tCount')
+    for value, count in Counter(code_length).most_common(10):
+        print('{}\t{}'.format(value, count))
+
+# Show some samples of the parsed entities
+def _show_samples(args, entities_file):
+    with args._open(entities_file, 'rb') as f:
+        entities = pickle.load(f)
+    for entity in random.sample(entities, min(args.show_samples, len(entities))):
+        pprint(entity, width=120)
+        print()
+
 # Parse functions and classes from the source code, and save them in a file.
 def _parse_source_code(args, output_file):
     source_files = _get_source_files(args.repo_path)
@@ -117,7 +146,6 @@ def _parse_source_code(args, output_file):
         with open(source_file, 'r') as f:
             source_code = f.read()
         parser = get_parser(SUPPORTED_FILE_EXTENSIONS[os.path.splitext(source_file)[1]])
-        parser.set_language(parser.language)
         try:
             tree = parser.parse(bytes(source_code, 'utf8'))
         except UnicodeDecodeError:
@@ -125,15 +153,23 @@ def _parse_source_code(args, output_file):
             continue
         entities.extend(_extract_entities(args, tree, source_file, source_code))
     
-    with gzip.open(output_file, 'wb') as f:
+    with args._open(output_file, 'wb') as f:
         pickle.dump(entities, f)
 
 # Parse functions and classes from the source code, and save them in a file.
 def parse(args):
-    output_file = os.path.join(args.repo_path, args.prefix + FILE_EXTENSIONS['parse'])
+    entities_file = os.path.join(args.repo_path, args.prefix + FILE_EXTENSIONS['parse'])
+
+    if args.info:
+        _show_info(args, entities_file)
+        return
+    
+    if args.show_samples > 0:
+        _show_samples(args, entities_file)
+        return
 
     print("parsing source code in {} ...".format(args.repo_path))
 
-    _parse_source_code(args, output_file)
+    _parse_source_code(args, entities_file)
 
-    print("parsed entities saved to {}".format(output_file))
+    print("parsed entities saved to {}".format(entities_file))
