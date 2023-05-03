@@ -1,2 +1,119 @@
+import faiss
+import os
+import sys
+import pickle
+
+import numpy as np
+
+from annoy import AnnoyIndex
+from datetime import datetime
+from kode_search.constants import FILE_EXTENSIONS
+
+def validate_index(index_file, index_info_file):
+    if not os.path.exists(index_file):
+        print('Index file {} does not exist.'.format(index_file))
+        sys.exit(1)
+
+    if not os.path.exists(index_info_file):
+        print('Index info file {} does not exist.'.format(index_info_file))
+        sys.exit(1)
+
+    with open(index_info_file, 'rb') as f:
+        index_info = pickle.load(f)
+
+    index_type = index_info['index_type']
+    embedding_size = index_info['embedding_size']
+    num_entities = index_info['num_entities']
+
+    assert num_entities == len(index_info['entities'])
+    assert index_info['creation_date'] is not None
+    assert index_type in ['faiss', 'annoy']
+
+    if index_type == 'faiss':
+        index = faiss.read_index(index_file)
+        assert index.ntotal == num_entities
+        assert index.d == embedding_size
+    else: # index_type == 'annoy'
+        index = AnnoyIndex(embedding_size, 'angular')
+        index.load(index_file)
+        assert index.get_n_items() == num_entities
+
+def _show_info(args, index_file, index_info_file):
+    validate_index(index_file, index_info_file)
+    
+    with args._open(index_info_file, 'rb') as f:
+        index_info = pickle.load(f)
+
+    index_type = index_info['index_type']
+    embedding_size = index_info['embedding_size']
+
+    # print index file size
+    print('Index file size:\t{} bytes'.format(os.path.getsize(index_file)))
+
+    if index_type == 'faiss':
+        index = faiss.read_index(index_file)
+        print('Index info:')
+        print('Number of entities:\t{}'.format(index.ntotal))
+        print('Embedding size:\t{}'.format(index.d))
+    elif index_type == 'annoy':
+        index = AnnoyIndex(embedding_size, 'angular')
+        index.load(index_file)
+        print('Index info:')
+        print('Number of entities:\t{}'.format(index.get_n_items()))
+        print('Embedding size:\t{}'.format(embedding_size))
+    else:
+        print('Unsupported index type: {}'.format(index_type))
+        sys.exit(1)
+
+def _create_index(args, embeddings_file, index_file, index_info_file):
+    if args.index_type not in ['faiss', 'annoy']:
+        print('Unsupported index type: {}'.format(args.index_type))
+        sys.exit(1)    
+
+    print("Creating index in {}, from {} ...".format(index_file, embeddings_file))
+    if not os.path.exists(embeddings_file):
+        print('Embeddings file {} does not exist.'.format(embeddings_file))
+        sys.exit(1)
+
+    with args._open(embeddings_file, 'rb') as f:
+        dataset = pickle.load(f)
+    
+    embeddings = dataset['embeddings']
+    index_info = {
+        'model' : dataset['model'],
+        'index_type' : args.index_type,
+        'creation_date' : datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'num_entities': len(embeddings),
+        'embedding_size': len(embeddings[0]),
+        'embeddings' : embeddings,
+        'entities': dataset['entities'],
+    }
+
+    if args.index_type == 'faiss':
+        print('Creating faiss index ...')
+        faiss_index = faiss.IndexFlatL2(len(embeddings[0]))
+        faiss_index.add(np.array(embeddings))
+        faiss.write_index(faiss_index, index_file)
+    else: # args.index_type == 'annoy'
+        print('Creating annoy index ...')
+        annoy_index = AnnoyIndex(len(embeddings[0]), 'angular')
+        for i, embedding in enumerate(embeddings):
+            annoy_index.add_item(i, embedding)
+        annoy_index.build(args.annoy_num_trees)
+        annoy_index.save(index_file)
+
+    with args._open(index_info_file, 'wb') as f:
+        pickle.dump(index_info, f)
+
+    print('Done. Index info saved in {}'.format(index_info_file))
+
 def index(args):
-    pass
+    embeddings_file = os.path.join(args.repo_path, args.prefix + FILE_EXTENSIONS['embed'])
+    index_file = os.path.join(args.repo_path, args.prefix + FILE_EXTENSIONS['index'])
+    index_info_file = os.path.join(args.repo_path, args.prefix + '.index_info')
+    
+    if args.info:
+        _show_info(args, index_file, index_info_file)
+        return
+                         
+    _create_index(args, embeddings_file, index_file, index_info_file)
