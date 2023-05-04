@@ -30,6 +30,9 @@ setuptools.setup(
     package_dir={
         "kode_search": "src/kode_search"
     },
+    package_data={
+        "kode_search": ["templates/*", "static/css/*"]
+    },
     entry_points={
         'console_scripts': [
             'kcs=kode_search.main:main',

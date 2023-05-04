@@ -12,53 +12,65 @@ from kode_search.index import validate_index
 
 from kode_search.constants import FILE_EXTENSIONS
 
-def _get_query_embedding(model_name, query):
+# It takes an array of queries and returns an array of embeddings.
+def _get_query_embedding(model_name, queries):
     model = SentenceTransformer(model_name)
-    return model.encode(query, convert_to_tensor=True)
+    return model.encode(queries, convert_to_tensor=True)
 
-def _faiss_search(args, index_file, query_embedding, num_results):
-    index = faiss.read_index(index_file)
-    D, I = index.search(np.array(query_embedding), num_results)
-    if args.verbose > 0:
+# Expose the function to be used by the server.
+# It takes a query, returns a list of entities.
+def kode_search(index, index_info, query, distance_threshold, num_results, verbose=False):
+    print('Searching "{}" using {} index, distrance_threshold={}.'.format(query, index_info['index_type'], distance_threshold))
+    query_embeddings = _get_query_embedding(index_info['model'], [query])        
+
+    if index_info['index_type'] == 'faiss':
+        # faiss search accepts an array of vectors at a time.
+        D, I = index.search(np.array(query_embeddings), num_results)
+        D = D[0]
+        I = I[0]
+    elif index_info['index_type'] == 'annoy':
+        # annoy get_nns_by_vector accepts only one vector at a time.
+        I, D = index.get_nns_by_vector(np.array(query_embeddings[0]), num_results, include_distances=True)
+    else:
+        raise Exception('Unknown index type: {}'.format(index_info['index_type']))
+
+    if verbose:
         print('D: {}'.format(D))
         print('I: {}'.format(I))
-    result_indices = [I[0][i] for i in range(len(I[0])) if D[0][i] <= args.distance_threshold]
-    return result_indices
 
-def _annoy_search(args, index_file, query_embedding, num_results):
-    index = AnnoyIndex(len(query_embedding), 'angular')
-    index.load(index_file)
-    I = index.get_nns_by_vector(np.array(query_embedding), num_results, include_distances=False)
-    if args.verbose > 0:
-        print('I: {}'.format(I))
-    return I
+    result_indices = [I[i] for i in range(len(I)) if D[i] <= distance_threshold]
+    return [index_info['entities'][i] for i in result_indices]
 
-def _search(args, index_file, index_info_file):
-    validate_index(index_file, index_info_file)
+def _do_search(args, index_file, index_info_file):
+    validate_index(args, index_file, index_info_file)
 
     with args._open(index_info_file, 'rb') as f:
         index_info = pickle.load(f)
 
-    model_name = index_info['model']
     index_type = index_info['index_type']
     embedding_size = index_info['embedding_size']
-
-    query_embedding = _get_query_embedding(model_name, args.query)
     num_results = max(args.show_samples, 3)
 
     if index_type == 'faiss':
-        result_indices = _faiss_search(args, index_file, query_embedding, num_results)
+        index = faiss.read_index(index_file)
+    elif index_type == 'annoy':
+        index = AnnoyIndex(embedding_size, 'angular')
+        index.load(index_file)
     else:
-        result_indices = _annoy_search(args, index_file, query_embedding, num_results)
+        raise Exception('Unknown index type: {}'.format(index_type))
+    
+    query = ' '.join(args.query)
+    results = kode_search(index, index_info, query, args.distance_threshold, num_results, args.verbose > 0)
 
-    if len(result_indices) == 0:
+    if len(results) == 0:
         print('No results found.')
-        return
+    else:
+        print('Found {} answers.'.format(len(results)))
+        from kode_search.viewer import Viewer
+        Viewer(results).run()
 
-    print('Found {} results.'.format(len(result_indices)))
-    entities = index_info['entities']
-    for i in result_indices:
-        pprint(entities[i], width=120)
+    # for r in results:
+    #     pprint(r, width=120)
 
 def search(args):
     index_file = os.path.join(args.repo_path, args.prefix + FILE_EXTENSIONS['index'])
@@ -68,4 +80,4 @@ def search(args):
         print('Query is empty.')
         sys.exit(1)
 
-    _search(args, index_file, index_info_file)
+    _do_search(args, index_file, index_info_file)

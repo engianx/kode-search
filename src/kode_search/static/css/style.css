@@ -1,0 +1,28 @@
+.content {
+  max-height: 250px;
+  /* Set the max-height to 10 lines of content */
+  overflow: hidden;
+  /* Hide the overflow content */
+  transition: max-height 0.5s ease-out;
+  /* Add a transition for smooth animation */
+}
+
+.expand-btn {
+  display: block;
+  /* Display the button as a block element */
+  text-align: center;
+  cursor: pointer;
+  /* Set the cursor to pointer on hover */
+  font-weight: bold;
+  padding: 5px;
+}
+
+.expand-btn:after {
+  content: '\2191';
+  /* Add the down arrow character using CSS pseudo-element */
+}
+
+.expand-btn.collapsed:after {
+  content: '\2193';
+  /* Change the arrow direction when the content is expanded */
+}

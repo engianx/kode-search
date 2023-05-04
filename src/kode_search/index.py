@@ -9,7 +9,7 @@ from annoy import AnnoyIndex
 from datetime import datetime
 from kode_search.constants import FILE_EXTENSIONS
 
-def validate_index(index_file, index_info_file):
+def validate_index(args, index_file, index_info_file):
     if not os.path.exists(index_file):
         print('Index file {} does not exist.'.format(index_file))
         sys.exit(1)
@@ -18,7 +18,7 @@ def validate_index(index_file, index_info_file):
         print('Index info file {} does not exist.'.format(index_info_file))
         sys.exit(1)
 
-    with open(index_info_file, 'rb') as f:
+    with args._open(index_info_file, 'rb') as f:
         index_info = pickle.load(f)
 
     index_type = index_info['index_type']
@@ -39,7 +39,7 @@ def validate_index(index_file, index_info_file):
         assert index.get_n_items() == num_entities
 
 def _show_info(args, index_file, index_info_file):
-    validate_index(index_file, index_info_file)
+    validate_index(args, index_file, index_info_file)
     
     with args._open(index_info_file, 'rb') as f:
         index_info = pickle.load(f)
@@ -48,22 +48,19 @@ def _show_info(args, index_file, index_info_file):
     embedding_size = index_info['embedding_size']
 
     # print index file size
-    print('Index file size:\t{} bytes'.format(os.path.getsize(index_file)))
+    print('Index info:')
+    print('\ttype:\t{}'.format(index_type))
+    print('\tfile size:\t{} bytes'.format(os.path.getsize(index_file)))
 
     if index_type == 'faiss':
         index = faiss.read_index(index_file)
-        print('Index info:')
-        print('Number of entities:\t{}'.format(index.ntotal))
-        print('Embedding size:\t{}'.format(index.d))
-    elif index_type == 'annoy':
+        print('\tnumber of entities:\t{}'.format(index.ntotal))
+        print('\tembedding size:\t{}'.format(index.d))
+    else: # index_type == 'annoy'
         index = AnnoyIndex(embedding_size, 'angular')
         index.load(index_file)
-        print('Index info:')
-        print('Number of entities:\t{}'.format(index.get_n_items()))
-        print('Embedding size:\t{}'.format(embedding_size))
-    else:
-        print('Unsupported index type: {}'.format(index_type))
-        sys.exit(1)
+        print('\tnumber of entities:\t{}'.format(index.get_n_items()))
+        print('\tnmbedding size:\t{}'.format(embedding_size))
 
 def _create_index(args, embeddings_file, index_file, index_info_file):
     if args.index_type not in ['faiss', 'annoy']:

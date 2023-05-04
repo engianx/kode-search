@@ -24,6 +24,7 @@ def _show_samples(args, embeddings_file):
 
     num_samples = min(args.show_samples, len(entities))
     sampled_indices = [random.randint(0, len(entities)-1) for _ in range(num_samples)]
+
     for idx in sampled_indices:
         pprint(entities[idx], width=120)
         pprint(embeddings[idx], width=120)
@@ -50,12 +51,12 @@ def _generate_embeddings(args, entities):
 
     # Prepare the input
     if args.embedding_type == 'code':
-        embedding_input = [entity['code'] for entity in entities]
+        embedding_input = [entity['content'] for entity in entities]
     elif args.embedding_type == 'summary':
         # Handle the case where the summary is empty
-        embedding_input = [entity['code'] if len(entity['summary']) == 0 else entity['summary'] for entity in entities]
+        embedding_input = [entity['content'] if len(entity['summary']) == 0 else entity['summary'] for entity in entities]
     elif args.embedding_type == 'summary_and_code':
-        embedding_input = [entity['summary'] + '\n' + entity['code'] for entity in entities]
+        embedding_input = [entity['summary'] + '\n' + entity['content'] for entity in entities]
     else:
         print('Unsupported embedding type: {}'.format(args.embedding_type))
         sys.exit(1)
