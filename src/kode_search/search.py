@@ -1,4 +1,5 @@
 import faiss
+import logging
 import os
 import pickle
 import sys
@@ -6,7 +7,6 @@ import sys
 import numpy as np
 
 from annoy import AnnoyIndex
-from pprint import pprint
 from sentence_transformers import SentenceTransformer
 from kode_search.index import validate_index
 
@@ -19,8 +19,8 @@ def _get_query_embedding(model_name, queries):
 
 # Expose the function to be used by the server.
 # It takes a query, returns a list of entities.
-def kode_search(index, index_info, query, distance_threshold, num_results, verbose=False):
-    print('Searching "{}" using {} index, distrance_threshold={}.'.format(query, index_info['index_type'], distance_threshold))
+def kode_search(index, index_info, query, distance_threshold, num_results, return_distances=False):
+    logging.info('Searching "{}" using {} index, distrance_threshold={}.'.format(query, index_info['index_type'], distance_threshold))
     query_embeddings = _get_query_embedding(index_info['model'], [query])        
 
     if index_info['index_type'] == 'faiss':
@@ -34,12 +34,14 @@ def kode_search(index, index_info, query, distance_threshold, num_results, verbo
     else:
         raise Exception('Unknown index type: {}'.format(index_info['index_type']))
 
-    if verbose:
-        print('D: {}'.format(D))
-        print('I: {}'.format(I))
+    logging.debug('D: {}'.format(D))
+    logging.debug('I: {}'.format(I))
 
     result_indices = [I[i] for i in range(len(I)) if D[i] <= distance_threshold]
-    return [index_info['entities'][i] for i in result_indices]
+    if return_distances:
+        return ([index_info['entities'][i] for i in result_indices], [D[i] for i in result_indices])
+    else:
+        return [index_info['entities'][i] for i in result_indices]
 
 def _do_search(args, index_file, index_info_file):
     validate_index(args, index_file, index_info_file)
@@ -60,7 +62,12 @@ def _do_search(args, index_file, index_info_file):
         raise Exception('Unknown index type: {}'.format(index_type))
     
     query = ' '.join(args.query)
-    results = kode_search(index, index_info, query, args.distance_threshold, num_results, args.verbose > 0)
+    results = kode_search(index, 
+                          index_info, 
+                          query,
+                          args.distance_threshold,
+                          num_results,
+                          include_distances=False)
 
     if len(results) == 0:
         print('No results found.')
@@ -68,9 +75,6 @@ def _do_search(args, index_file, index_info_file):
         print('Found {} answers.'.format(len(results)))
         from kode_search.viewer import Viewer
         Viewer(results).run()
-
-    # for r in results:
-    #     pprint(r, width=120)
 
 def search(args):
     index_file = os.path.join(args.repo_path, args.prefix + FILE_EXTENSIONS['index'])

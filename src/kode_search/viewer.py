@@ -8,6 +8,7 @@ from prompt_toolkit.formatted_text import to_formatted_text
 from prompt_toolkit.formatted_text import HTML
 
 from dataclasses import dataclass
+import textwrap
 
 @dataclass
 class Entity:
@@ -58,7 +59,7 @@ class Viewer:
         for i, entity in enumerate(self._entities):
             if i == self._idx:
                 lines.append(to_formatted_text(HTML(
-                    f'👉 {entity.file.split("/")[-1:][0]}:{entity.line}'), style='#7474FF'))
+                    f'👉 {entity.file.split("/")[-1:][0]}:{entity.line}'), style='#7474EE'))
             else:
                 lines.append([('', 
                     f'   {entity.file.split("/")[-1:][0]}:{entity.line}')])
@@ -70,7 +71,8 @@ class Viewer:
         entity = self._entities[self._idx]
         if entity.summary is None:
             return entity.content
-        return entity.summary + '\n\n' + entity.content
+        # Break summary into paragraphs.
+        return '\n'.join(textwrap.wrap(entity.summary, width=80)) + '\n\n' + entity.content
     
     def _go_down(self):
         if self._idx < len(self._entities) - 1:

@@ -1,5 +1,6 @@
 import fnmatch
 import git
+import logging
 import openai
 import os
 import pickle
@@ -8,8 +9,9 @@ import sys
 import tiktoken
 import time
 
-from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from functools import partial
 from tree_sitter_languages import get_parser
 from tqdm import tqdm
 
@@ -131,7 +133,7 @@ def _extract_entities(args, tree, source_file, source_code):
 # show the information of the parsed entities
 def _show_info(args, entities_file):
     if not os.path.exists(entities_file):
-        print('File {} does not exist.'.format(entities_file))
+        logging.critical('File {} does not exist.'.format(entities_file))
         sys.exit(1)
 
     with args._open(entities_file, 'rb') as f:
@@ -159,7 +161,7 @@ def _show_info(args, entities_file):
 # Show some samples of the parsed entities
 def _show_samples(args, entities_file):
     if not os.path.exists(entities_file):
-        print('File {} does not exist.'.format(entities_file))
+        logging.critical('File {} does not exist.'.format(entities_file))
         sys.exit(1)
 
     with args._open(entities_file, 'rb') as f:
@@ -180,12 +182,11 @@ GPT_MAX_TOKENS = 3068 # leave 1024 tokens for the response. 4096 is the max toke
 def _get_code_summary(args, code): 
     # If the code is too short, we don't need to summarize it
     if code.count('\n') < args.code_lines_threshold:
-        if args.verbose >= 2:
-            print('Code is too short to summarize.')
+        logging.debug('Code is too short to summarize.')
         return ""
     
     # GPT chat completion api prompt.
-    prompt_template = """What is the purpose of the following code and how does it achieve its objective?
+    prompt_template = """What is the purpose of the following code and how does it achieve its objective? What are search keywords from the code?
 
     ```
     {}
@@ -198,8 +199,7 @@ def _get_code_summary(args, code):
     # check if the message is too long
     num_tokens = num_tokens_from_messages(messages)
     while num_tokens > GPT_MAX_TOKENS:
-        if args.verbose >= 2:
-            print('Code is too long, removing some lines. {} tokens > {} tokens'.format(num_tokens, GPT_MAX_TOKENS))
+        logging.debug('Code is too long, removing some lines. {} tokens > {} tokens'.format(num_tokens, GPT_MAX_TOKENS))
         # estimate how many lines we should remove
         percent = GPT_MAX_TOKENS / num_tokens
         splitted_code_lines = code.split('\n')
@@ -212,8 +212,7 @@ def _get_code_summary(args, code):
 
     # if the final message is too small, we don't need to summarize it
     if code.count('\n') < args.code_lines_threshold:
-        if args.verbose >= 2:
-            print('Code is too short to summarize.')
+        logging.debug('Code is too short to summarize.')
         return ""
 
     try_count = 0
@@ -227,51 +226,58 @@ def _get_code_summary(args, code):
             )
             return response.choices[0].message["content"]
         except Exception as e:
-            if args.verbose >= 1:
-                print('GPT API Error: {}'.format(e))
+            logging.warning('GPT API Error: {}'.format(e))
             time.sleep(2**try_count)
 
-    if args.verbose >= 1:
-        print('Failed to get summary.')
+    logging.error('Failed to get summary from GPT API after retrying.')
     return ""
+
+# Single thread version of summarizing entities
+def _summarized_entity(args, entity):     
+    if entity['content_type'] == 'code':
+        summary = _get_code_summary(args, entity['content'])
+        entity['summary'] = summary
 
 # Generate summaries for the parsed entities
 # This step costs $$$.
 def _generate_summaries(args, entities_file):
-    print('Generating summaries for entities in {}...'.format(entities_file))
+    logging.info('Generating summaries for entities in {}...'.format(entities_file))
     if not ask_user_confirmation("This step costs $$$, are you sure to continue?"):
         sys.exit(0)
 
     if not os.path.exists(entities_file):
-        print('File {} does not exist.'.format(entities_file))
+        logging.critical('File {} does not exist.'.format(entities_file))
         sys.exit(1)
 
     with args._open(entities_file, 'rb') as f:
         dataset = pickle.load(f)
 
     entities = dataset['entities']
-    for entity in tqdm(entities):
-        if entity['content_type'] != 'code':
-            continue
-        summary = _get_code_summary(args, entity['content'])
-        entity['summary'] = summary
+
+    if args.threads > 1:
+        # Multi-thread version
+        logging.info('Using {} threads to generate summaries...'.format(args.threads))
+        with ThreadPoolExecutor(max_workers=args.threads) as t:
+            _ = list(tqdm(t.map(partial(_summarized_entity, args), entities), total=len(entities)))
+    else:
+        for entity in tqdm(entities):
+            _summarized_entity(args, entity)
 
     with args._open(entities_file, 'wb') as f:
         pickle.dump(dataset, f)
 
 # Parse functions and classes from the source code, and save them in a file.
 def _parse_source_code(args, output_file):
+    logging.info('Prasing source code from repo...')
     source_files = _get_source_files(args.repo_path)
     if len(source_files) == 0:
-        print('No supported source code files found in {}.'.format(args.repo_path))
-        sys.exit(1)
+        logging.warning('No supported source code files found in {}.'.format(args.repo_path))
+        return
     
-    if args.verbose >= 1:
-        print('Found {} source code files.'.format(len(source_files)))
-    if args.verbose >= 2:
-        print('Source code file samples:')
-        for file in random.sample(source_files, 10):
-            print('\t{}'.format(file))
+    logging.info('Found {} source code files.'.format(len(source_files)))
+    logging.debug('Source code file samples:')
+    for file in random.sample(source_files, 10):
+        logging.debug('\t{}'.format(file))
 
     entities = []
     # Load the parser for the language, and parse the source code
@@ -282,7 +288,7 @@ def _parse_source_code(args, output_file):
         try:
             tree = parser.parse(bytes(source_code, 'utf8'))
         except UnicodeDecodeError:
-            print('UnicodeDecodeError when parsing {}'.format(source_file))
+            logging.error('UnicodeDecodeError when parsing {}'.format(source_file))
             continue
         entities.extend(_extract_entities(args, tree, source_file, source_code))
 
@@ -298,6 +304,8 @@ def _parse_source_code(args, output_file):
     
     with args._open(output_file, 'wb') as f:
         pickle.dump(dataset, f)
+
+    logging.info("Parsed entities saved to {}".format(output_file))
 
 # Parse functions and classes from the source code, and save them in a file.
 def parse(args):
@@ -315,8 +323,12 @@ def parse(args):
         _generate_summaries(args, entities_file)
         return
     
-    print("parsing source code in {} ...".format(args.repo_path))
+    if args.run:
+        _parse_source_code(args, entities_file)
+        return
 
-    _parse_source_code(args, entities_file)
-
-    print("parsed entities saved to {}".format(entities_file))
+    print('No supported action specified, use one of the following options:')
+    print('\t--info\tshow info about the parsed entities')
+    print('\t--show-samples\tshow samples of the parsed entities')
+    print('\t--generate-summary\tgenerate summaries for the parsed entities')
+    print('\t--run\tparse source code and save the parsed entities to a file')

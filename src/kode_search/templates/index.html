@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Semantic Code Search Demo</title>
+    <title>Code Search Demo</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-KK94CHFLLe+nY2dmCWGMq91rCGa5gtU4mk92HdvYe+M/SXH301p5ILy+dN9+nJOZ" crossorigin="anonymous">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
   </head>
 <body class="bg-light">
-    <div class="container mt-5">
+    <div class="container-fluid mt-5">
       <div class="row">
         <div class="col-md-8 offset-md-2">
-          <h1 class="mb-4 text-center">Use natural language to search</h1>
+          <h1 class="mb-4 text-center">Natural Language Code Search</h1>
           <form action="/search" method="GET">
             <div class="row">
               <div class="col-md-7">
@@ -31,8 +31,13 @@
               <div id="search-results">
                 {% for r in results %}
                 <div>
-                    <div>File - {{ r.file }} : {{ r.line }}</div>
+                  {% if r.file_url is not none %}
+                    <div><a href="{{ r.file_url }}" target='_blank'>{{ r.file_url }}</a></div>
+                  {% else %}
+                    <div>File - {{ r.file }}:{{ r.line }}</div>
+                  {% endif %}
                     <div>Summary - {{ r.summary }}</div>
+                    <div>Distance - {{ r.distance }}</div>
                     {% if r.content_type == 'code' %}
                         <div class="content"><pre><code>{{ r.content }}</code></pre></div>
                     {% else %}
@@ -42,6 +47,8 @@
                 <hr>
                 {% endfor %}
               </div>
+            {% else %}
+              <div class="alert alert-info">No results found</div>
             {% endif %}
             </div>
           </div>

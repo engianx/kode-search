@@ -1,4 +1,5 @@
 import faiss
+import logging
 import os
 import sys
 import pickle
@@ -11,11 +12,11 @@ from kode_search.constants import FILE_EXTENSIONS
 
 def validate_index(args, index_file, index_info_file):
     if not os.path.exists(index_file):
-        print('Index file {} does not exist.'.format(index_file))
+        logging.critical('Index file {} does not exist.'.format(index_file))
         sys.exit(1)
 
     if not os.path.exists(index_info_file):
-        print('Index info file {} does not exist.'.format(index_info_file))
+        logging.critical('Index info file {} does not exist.'.format(index_info_file))
         sys.exit(1)
 
     with args._open(index_info_file, 'rb') as f:
@@ -63,13 +64,14 @@ def _show_info(args, index_file, index_info_file):
         print('\tnmbedding size:\t{}'.format(embedding_size))
 
 def _create_index(args, embeddings_file, index_file, index_info_file):
+    logging.info("Creating index in {}, from {} ...".format(index_file, embeddings_file))
+
     if args.index_type not in ['faiss', 'annoy']:
-        print('Unsupported index type: {}'.format(args.index_type))
+        logging.critical('Unsupported index type: {}'.format(args.index_type))
         sys.exit(1)    
 
-    print("Creating index in {}, from {} ...".format(index_file, embeddings_file))
     if not os.path.exists(embeddings_file):
-        print('Embeddings file {} does not exist.'.format(embeddings_file))
+        logging.critical('Embeddings file {} does not exist.'.format(embeddings_file))
         sys.exit(1)
 
     with args._open(embeddings_file, 'rb') as f:
@@ -87,12 +89,12 @@ def _create_index(args, embeddings_file, index_file, index_info_file):
     }
 
     if args.index_type == 'faiss':
-        print('Creating faiss index ...')
+        logging.info('Creating faiss index ...')
         faiss_index = faiss.IndexFlatL2(len(embeddings[0]))
         faiss_index.add(np.array(embeddings))
         faiss.write_index(faiss_index, index_file)
     else: # args.index_type == 'annoy'
-        print('Creating annoy index ...')
+        logging.info('Creating annoy index ...')
         annoy_index = AnnoyIndex(len(embeddings[0]), 'angular')
         for i, embedding in enumerate(embeddings):
             annoy_index.add_item(i, embedding)
@@ -102,7 +104,7 @@ def _create_index(args, embeddings_file, index_file, index_info_file):
     with args._open(index_info_file, 'wb') as f:
         pickle.dump(index_info, f)
 
-    print('Done. Index info saved in {}'.format(index_info_file))
+    logging.info('Done. Index info saved in {}'.format(index_info_file))
 
 def index(args):
     embeddings_file = os.path.join(args.repo_path, args.prefix + FILE_EXTENSIONS['embed'])
@@ -112,5 +114,11 @@ def index(args):
     if args.info:
         _show_info(args, index_file, index_info_file)
         return
-                         
-    _create_index(args, embeddings_file, index_file, index_info_file)
+
+    if args.run:
+        _create_index(args, embeddings_file, index_file, index_info_file)
+        return
+    
+    print('No supported action specified. Use one of the following options:')
+    print('\t--info\t\tShow index info')
+    print('\t--run\t\tCreate index')

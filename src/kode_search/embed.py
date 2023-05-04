@@ -1,3 +1,4 @@
+import logging
 import os
 import pickle
 import random
@@ -13,7 +14,7 @@ from kode_search.utils import ask_user_confirmation
 
 def _show_samples(args, embeddings_file):
     if not os.path.exists(embeddings_file):
-        print('Embeddings file {} does not exist.'.format(args.embeddings_file))
+        logging.critical('Embeddings file {} does not exist.'.format(embeddings_file))
         sys.exit(1)
 
     with args._open(embeddings_file, 'rb') as f:
@@ -31,7 +32,7 @@ def _show_samples(args, embeddings_file):
 
 def _show_info(args, embeddings_file):
     if not os.path.exists(embeddings_file):
-        print('Embeddings file {} does not exist.'.format(embeddings_file))
+        logging.critical('Embeddings file {} does not exist.'.format(embeddings_file))
         sys.exit(1)
 
     with args._open(embeddings_file, 'rb') as f:
@@ -58,7 +59,7 @@ def _generate_embeddings(args, entities):
     elif args.embedding_type == 'summary_and_code':
         embedding_input = [entity['summary'] + '\n' + entity['content'] for entity in entities]
     else:
-        print('Unsupported embedding type: {}'.format(args.embedding_type))
+        logging.critical('Unsupported embedding type: {}'.format(args.embedding_type))
         sys.exit(1)
 
     # Generate the embeddings
@@ -67,7 +68,7 @@ def _generate_embeddings(args, entities):
     return embeddings
 
 def _create_embeddings(args, entities_file, output_file):
-    print("Creating embeddings in {}, from {} ...".format(output_file, entities_file))
+    logging.info("Creating embeddings in {}, from {} ...".format(output_file, entities_file))
     # Load the entities from the .parse intermediate file
     with args._open(entities_file, 'rb') as f:
         entity_dataset = pickle.load(f)
@@ -86,6 +87,8 @@ def _create_embeddings(args, entities_file, output_file):
     with args._open(output_file, 'wb') as f:
         pickle.dump(dataset, f)
 
+    logging.info('Embeddings created. saved in {}'.format(output_file))
+
 # Take the .parse intermediate file and generate embeddings for each entity
 # Save the embeddings in a file.
 def embed(args):
@@ -100,4 +103,11 @@ def embed(args):
         _show_info(args, embeddings_file)
         return
     
-    _create_embeddings(args, entities_file, embeddings_file)
+    if args.run:
+        _create_embeddings(args, entities_file, embeddings_file)
+        return
+    
+    print('No supported action specified, use one of the following options:')
+    print('\t--info\tShow information about the embeddings file.')
+    print('\t--show-samples\tShow some samples from the embeddings file.')
+    print('\t--run\tCreate the embeddings file.')
