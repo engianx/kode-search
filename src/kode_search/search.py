@@ -9,19 +9,15 @@ import numpy as np
 from annoy import AnnoyIndex
 from sentence_transformers import SentenceTransformer
 from kode_search.index import validate_index
+from kode_search.embed import get_embeddings
 
 from kode_search.constants import FILE_EXTENSIONS
-
-# It takes an array of queries and returns an array of embeddings.
-def _get_query_embedding(model_name, queries):
-    model = SentenceTransformer(model_name)
-    return model.encode(queries, convert_to_tensor=True)
 
 # Expose the function to be used by the server.
 # It takes a query, returns a list of entities.
 def kode_search(index, index_info, query, distance_threshold, num_results, return_distances=False):
     logging.info('Searching "{}" using {} index, distrance_threshold={}.'.format(query, index_info['index_type'], distance_threshold))
-    query_embeddings = _get_query_embedding(index_info['model'], [query])        
+    query_embeddings = get_embeddings(index_info['model'], [query])        
 
     if index_info['index_type'] == 'faiss':
         # faiss search accepts an array of vectors at a time.
@@ -39,7 +35,7 @@ def kode_search(index, index_info, query, distance_threshold, num_results, retur
 
     result_indices = [I[i] for i in range(len(I)) if D[i] <= distance_threshold]
     if return_distances:
-        return ([index_info['entities'][i] for i in result_indices], [D[i] for i in result_indices])
+        return ([index_info['entities'][i] for i in result_indices], D)
     else:
         return [index_info['entities'][i] for i in result_indices]
 
@@ -67,7 +63,7 @@ def _do_search(args, index_file, index_info_file):
                           query,
                           args.distance_threshold,
                           num_results,
-                          include_distances=False)
+                          return_distances=False)
 
     if len(results) == 0:
         print('No results found.')

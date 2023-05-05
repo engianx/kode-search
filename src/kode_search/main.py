@@ -45,6 +45,8 @@ def main():
                         help='Threshold to be considered for summarization.')
     parser.add_argument('--threads', type=int, default=1,
                         help='Number of threads to be used for summarization.')
+    parser.add_argument('--recreate', action='store_true', default=False,
+                        help='Recreate the entity file from exsiting one.')
 
     # arguments for creating embeddings
     parser.add_argument('-e', '--embed', action='store_true', default=False,

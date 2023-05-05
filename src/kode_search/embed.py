@@ -12,6 +12,11 @@ from sentence_transformers import SentenceTransformer
 from kode_search.constants import FILE_EXTENSIONS
 from kode_search.utils import ask_user_confirmation
 
+def get_embeddings(model_name, inputs, show_progress_bar=False, batch_size=1):
+    # Load the model
+    model = SentenceTransformer(model_name)    
+    return model.encode(inputs, show_progress_bar=show_progress_bar, batch_size=batch_size)
+
 def _show_samples(args, embeddings_file):
     if not os.path.exists(embeddings_file):
         logging.critical('Embeddings file {} does not exist.'.format(embeddings_file))
@@ -47,23 +52,20 @@ def _show_info(args, embeddings_file):
     print('Embedding size:\t{}'.format(len(dataset['embeddings'][0])))
 
 def _generate_embeddings(args, entities):
-    # Load the model
-    model = SentenceTransformer(args.model)
-
     # Prepare the input
     if args.embedding_type == 'code':
-        embedding_input = [entity['content'] for entity in entities]
+        embedding_input = [e['content'] for e in entities]
     elif args.embedding_type == 'summary':
         # Handle the case where the summary is empty
-        embedding_input = [entity['content'] if len(entity['summary']) == 0 else entity['summary'] for entity in entities]
+        embedding_input = [e['summary'] if 'summary' in e else e['content'] for e in entities]
     elif args.embedding_type == 'summary_and_code':
-        embedding_input = [entity['summary'] + '\n' + entity['content'] for entity in entities]
+        embedding_input = [e['summary'] + '\n' + e['content'] if 'summary' in e else e['content'] for e in entities]
     else:
         logging.critical('Unsupported embedding type: {}'.format(args.embedding_type))
         sys.exit(1)
 
     # Generate the embeddings
-    embeddings = model.encode(embedding_input, convert_to_tensor=True, show_progress_bar=True, batch_size=args.embedding_batch_size)
+    embeddings = get_embeddings(args.model, embedding_input, show_progress_bar=True, batch_size=args.embedding_batch_size)
 
     return embeddings
 

@@ -85,7 +85,7 @@ def _get_random_samples(num_results):
             'line': sample['start_line'],
             'content_type': sample['content_type'],
             'content': sample['content'],
-            'summary': html.escape(sample['summary']),
+            'summary': html.escape(sample['summary']) if 'summary' in sample else '',
             'distance': 0.0,
         }
         answers.append(answer)
@@ -118,7 +118,7 @@ def _search(query, num_results, distance_threshold=DISTANCE_THRESHOLD):
             'line': r['start_line'],
             'content_type': r['content_type'],
             'content': r['content'],
-            'summary': html.escape(r['summary']),
+            'summary': html.escape(r['summary']) if 'summary' in r else '',
             'distance': distances[i],
         }
         answers.append(answer)

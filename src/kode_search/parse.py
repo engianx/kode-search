@@ -5,6 +5,7 @@ import openai
 import os
 import pickle
 import random
+import shutil
 import sys
 import tiktoken
 import time
@@ -144,6 +145,8 @@ def _show_info(args, entities_file):
 
     entities = dataset['entities']
     print('Number of entities:\t{}'.format(len(entities)))
+    # Number of entities with summary
+    print('Number of summaries:\t{}'.format(sum(1 for e in entities if 'summary' in e)))
     
     # Bucket the code length into different ranges
     bucket_size = 1000
@@ -213,7 +216,7 @@ def _get_code_summary(args, code):
     # if the final message is too small, we don't need to summarize it
     if code.count('\n') < args.code_lines_threshold:
         logging.debug('Code is too short to summarize.')
-        return ""
+        return None
 
     try_count = 0
     while try_count < args.openai_api_retries:
@@ -230,13 +233,14 @@ def _get_code_summary(args, code):
             time.sleep(2**try_count)
 
     logging.error('Failed to get summary from GPT API after retrying.')
-    return ""
+    return None
 
 # Single thread version of summarizing entities
 def _summarized_entity(args, entity):     
     if entity['content_type'] == 'code':
         summary = _get_code_summary(args, entity['content'])
-        entity['summary'] = summary
+        if summary is not None:
+            entity['summary'] = summary
 
 # Generate summaries for the parsed entities
 # This step costs $$$.
@@ -307,6 +311,31 @@ def _parse_source_code(args, output_file):
 
     logging.info("Parsed entities saved to {}".format(output_file))
 
+# Recreate the entities file from the source code.
+def _recreate(args, entities_file):
+    logging.info('Recreating entities file {}...'.format(entities_file))
+    if not os.path.exists(entities_file):
+        logging.critical('File {} does not exist.'.format(entities_file))
+        sys.exit(1)
+
+    # Make a backup of the original file
+    backup_file = entities_file + '.bak'
+    shutil.copyfile(entities_file, backup_file)
+    logging.info('Backup file saved to {}'.format(backup_file))
+
+    with args._open(entities_file, 'rb') as f:
+        dataset = pickle.load(f)
+
+    entities = dataset['entities']
+
+    # This code can be changed frequently.
+    for e in tqdm(entities):
+        if 'summary' in e and len(e['summary'].strip()) == 0:
+            del e['summary']
+
+    with args._open(entities_file, 'wb') as f:
+        pickle.dump(dataset, f)
+
 # Parse functions and classes from the source code, and save them in a file.
 def parse(args):
     entities_file = os.path.join(args.repo_path, args.prefix + FILE_EXTENSIONS['parse'])
@@ -323,6 +352,10 @@ def parse(args):
         _generate_summaries(args, entities_file)
         return
     
+    if args.recreate:
+        _recreate(args, entities_file)
+        return
+    
     if args.run:
         _parse_source_code(args, entities_file)
         return
@@ -331,4 +364,5 @@ def parse(args):
     print('\t--info\tshow info about the parsed entities')
     print('\t--show-samples\tshow samples of the parsed entities')
     print('\t--generate-summary\tgenerate summaries for the parsed entities')
+    print('\t--recreate\trecreate the parsed entities')
     print('\t--run\tparse source code and save the parsed entities to a file')

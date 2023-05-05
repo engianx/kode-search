@@ -91,7 +91,7 @@ def _create_index(args, embeddings_file, index_file, index_info_file):
     if args.index_type == 'faiss':
         logging.info('Creating faiss index ...')
         faiss_index = faiss.IndexFlatL2(len(embeddings[0]))
-        faiss_index.add(np.array(embeddings))
+        faiss_index.add(embeddings)
         faiss.write_index(faiss_index, index_file)
     else: # args.index_type == 'annoy'
         logging.info('Creating annoy index ...')
