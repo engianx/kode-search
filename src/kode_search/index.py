@@ -50,7 +50,9 @@ def _show_info(args, index_file, index_info_file):
 
     # print index file size
     print('Index info:')
-    print('\ttype:\t{}'.format(index_type))
+    print('\tcreation date:\t{}'.format(index_info['creation_date']))
+    print('\tmodel:\t{}'.format(index_info['model']))
+    print('\tindex type:\t{}'.format(index_type))
     print('\tfile size:\t{} bytes'.format(os.path.getsize(index_file)))
 
     if index_type == 'faiss':

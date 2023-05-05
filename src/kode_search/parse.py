@@ -1,18 +1,13 @@
 import fnmatch
 import git
 import logging
-import openai
 import os
 import pickle
 import random
 import shutil
 import sys
-import tiktoken
-import time
 
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from functools import partial
 from tree_sitter_languages import get_parser
 from tqdm import tqdm
 
@@ -62,6 +57,9 @@ _LANG_TO_NODE_TYPES = {
 
 NODE_TYPES_TO_EXTRACT = list(set(val for sublit in _LANG_TO_NODE_TYPES.values() for val in sublit))
 
+def _get_language(source_file):
+    return SUPPORTED_FILE_EXTENSIONS[os.path.splitext(source_file)[1]]
+
 def _get_source_files_from_git_repo(repo_path):
     try:
         repo = git.Repo(repo_path, search_parent_directories=True)
@@ -105,14 +103,28 @@ def _traverse_tree(tree):
             if cursor.goto_next_sibling():
                 retracing = False
 
+# Customization code
+def _filter_node(node, source_file, source_code):
+    lang = _get_language(source_file)
+    if lang == 'cpp':
+        # class_specifier, struct_specifier without body are not real classes
+        if node.type == 'class_specifier' or node.type == 'struct_specifier':
+            return node.start_point[0] == node.end_point[0]
+
+    return False
+
 # Extract functions and classes from the source code
-def _extract_entities(args, tree, source_file, source_code):
+def _extract_entities(tree, source_file, source_code):
     entities = []
     all_nodes = list(_traverse_tree(tree))
     for node in all_nodes:
         # Only extract functions and classes at the root level
         if node.type not in NODE_TYPES_TO_EXTRACT:
             continue
+
+        if _filter_node(node, source_file, source_code):
+            continue
+
         # Entity format:
         # {
         #   'file': 'path/to/file.java',
@@ -130,145 +142,6 @@ def _extract_entities(args, tree, source_file, source_code):
             'content': source_code[node.start_byte:node.end_byte],
         })
     return entities
-
-# show the information of the parsed entities
-def _show_info(args, entities_file):
-    if not os.path.exists(entities_file):
-        logging.critical('File {} does not exist.'.format(entities_file))
-        sys.exit(1)
-
-    with args._open(entities_file, 'rb') as f:
-        dataset = pickle.load(f)
-
-    print('repo:\t {}'.format(dataset['repo']))
-    print('created at:\t{}'.format(dataset['created_at']))
-
-    entities = dataset['entities']
-    print('Number of entities:\t{}'.format(len(entities)))
-    # Number of entities with summary
-    print('Number of summaries:\t{}'.format(sum(1 for e in entities if 'summary' in e)))
-    
-    # Bucket the code length into different ranges
-    bucket_size = 1000
-    max_code_length = max([len(entity['content']) for entity in entities])
-    buckets = [0] * (max_code_length // bucket_size + 1)
-    for entity in entities:
-        buckets[len(entity['content']) // bucket_size] += 1
-    print('Code length distribution:')
-    print('Length\tCount')
-    for i, count in enumerate(buckets):
-        if count == 0:
-            continue
-        print('{}-{}\t\t{}'.format(i * bucket_size, (i+1)*bucket_size, count))
-
-# Show some samples of the parsed entities
-def _show_samples(args, entities_file):
-    if not os.path.exists(entities_file):
-        logging.critical('File {} does not exist.'.format(entities_file))
-        sys.exit(1)
-
-    with args._open(entities_file, 'rb') as f:
-        dataset = pickle.load(f)
-    
-    entities = dataset['entities']
-
-    samples = random.sample(entities, min(args.show_samples, len(entities)))
-    from kode_search.viewer import Viewer
-    Viewer(samples).run()
-
-# GPT api parameters
-GPT_MODEL = 'gpt-3.5-turbo'
-GPT_MAX_TOKENS = 3068 # leave 1024 tokens for the response. 4096 is the max token length for gpt-3.5-turbo
-
-# call openai chat completion api with back-off
-# returns a json string if successful, otherwise None
-def _get_code_summary(args, code): 
-    # If the code is too short, we don't need to summarize it
-    if code.count('\n') < args.code_lines_threshold:
-        logging.debug('Code is too short to summarize.')
-        return ""
-    
-    # GPT chat completion api prompt.
-    prompt_template = """What is the purpose of the following code and how does it achieve its objective? What are search keywords from the code?
-
-    ```
-    {}
-    ```
-    """
-    
-    prompt = prompt_template.format(code)
-    messages = [{"role": "user", "content": prompt}]
-
-    # check if the message is too long
-    num_tokens = num_tokens_from_messages(messages)
-    while num_tokens > GPT_MAX_TOKENS:
-        logging.debug('Code is too long, removing some lines. {} tokens > {} tokens'.format(num_tokens, GPT_MAX_TOKENS))
-        # estimate how many lines we should remove
-        percent = GPT_MAX_TOKENS / num_tokens
-        splitted_code_lines = code.split('\n')
-        num_lines = int(len(splitted_code_lines) * percent)
-        code = '\n'.join(splitted_code_lines[:num_lines])
-
-        prompt = prompt_template.format(code)
-        messages = [{"role": "user", "content": prompt}]
-        num_tokens = num_tokens_from_messages(messages)
-
-    # if the final message is too small, we don't need to summarize it
-    if code.count('\n') < args.code_lines_threshold:
-        logging.debug('Code is too short to summarize.')
-        return None
-
-    try_count = 0
-    while try_count < args.openai_api_retries:
-        try_count += 1
-        try:
-            response = openai.ChatCompletion.create(
-                model=GPT_MODEL,
-                messages=messages,
-                temperature=0,
-            )
-            return response.choices[0].message["content"]
-        except Exception as e:
-            logging.warning('GPT API Error: {}'.format(e))
-            time.sleep(2**try_count)
-
-    logging.error('Failed to get summary from GPT API after retrying.')
-    return None
-
-# Single thread version of summarizing entities
-def _summarized_entity(args, entity):     
-    if entity['content_type'] == 'code':
-        summary = _get_code_summary(args, entity['content'])
-        if summary is not None:
-            entity['summary'] = summary
-
-# Generate summaries for the parsed entities
-# This step costs $$$.
-def _generate_summaries(args, entities_file):
-    logging.info('Generating summaries for entities in {}...'.format(entities_file))
-    if not ask_user_confirmation("This step costs $$$, are you sure to continue?"):
-        sys.exit(0)
-
-    if not os.path.exists(entities_file):
-        logging.critical('File {} does not exist.'.format(entities_file))
-        sys.exit(1)
-
-    with args._open(entities_file, 'rb') as f:
-        dataset = pickle.load(f)
-
-    entities = dataset['entities']
-
-    if args.threads > 1:
-        # Multi-thread version
-        logging.info('Using {} threads to generate summaries...'.format(args.threads))
-        with ThreadPoolExecutor(max_workers=args.threads) as t:
-            _ = list(tqdm(t.map(partial(_summarized_entity, args), entities), total=len(entities)))
-    else:
-        for entity in tqdm(entities):
-            _summarized_entity(args, entity)
-
-    with args._open(entities_file, 'wb') as f:
-        pickle.dump(dataset, f)
 
 # Parse functions and classes from the source code, and save them in a file.
 def _parse_source_code(args, output_file):
@@ -288,13 +161,13 @@ def _parse_source_code(args, output_file):
     for source_file in tqdm(source_files):
         with open(source_file, 'r') as f:
             source_code = f.read()
-        parser = get_parser(SUPPORTED_FILE_EXTENSIONS[os.path.splitext(source_file)[1]])
+        parser = get_parser(_get_language(source_file))
         try:
             tree = parser.parse(bytes(source_code, 'utf8'))
         except UnicodeDecodeError:
             logging.error('UnicodeDecodeError when parsing {}'.format(source_file))
             continue
-        entities.extend(_extract_entities(args, tree, source_file, source_code))
+        entities.extend(_extract_entities(tree, source_file, source_code))
 
     if args.sampling > 0:
         entities = random.sample(entities, min(args.sampling, len(entities)))
@@ -328,28 +201,71 @@ def _recreate(args, entities_file):
 
     entities = dataset['entities']
 
-    # This code can be changed frequently.
-    for e in tqdm(entities):
-        if 'summary' in e and len(e['summary'].strip()) == 0:
-            del e['summary']
+    # Remove oneliners
+    new_entities = [e for e in entities if len(e['content'].split('\n')) > 1]
+    logging.info('Removed {} oneliners.'.format(len(entities) - len(new_entities)))
+    dataset['entities'] = new_entities    
 
     with args._open(entities_file, 'wb') as f:
         pickle.dump(dataset, f)
+
+# Both function are exposed to summary.py
+# show the information of the parsed entities
+def show_info(args, entities_file):
+    if not os.path.exists(entities_file):
+        logging.critical('File {} does not exist.'.format(entities_file))
+        sys.exit(1)
+
+    with args._open(entities_file, 'rb') as f:
+        dataset = pickle.load(f)
+
+    print('repo:\t {}'.format(dataset['repo']))
+    print('created at:\t{}'.format(dataset['created_at']))
+
+    entities = dataset['entities']
+    print('Number of entities:\t{}'.format(len(entities)))
+    # Number of entities with summary
+    print('Number of summaries:\t{}'.format(sum(1 for e in entities if 'summary' in e)))
+    
+    # Bucket the code length into different ranges
+    bucket_size = 1000
+    max_code_length = max([len(entity['content']) for entity in entities])
+    buckets = [0] * (max_code_length // bucket_size + 1)
+    for entity in entities:
+        buckets[len(entity['content']) // bucket_size] += 1
+    print('Code length distribution:')
+    print('Length\tCount')
+    for i, count in enumerate(buckets):
+        if count == 0:
+            continue
+        print('{}-{}\t\t{}'.format(i * bucket_size, (i+1)*bucket_size, count))
+
+# Show some samples of the parsed entities
+def show_samples(args, entities_file):
+    if not os.path.exists(entities_file):
+        logging.critical('File {} does not exist.'.format(entities_file))
+        sys.exit(1)
+
+    with args._open(entities_file, 'rb') as f:
+        dataset = pickle.load(f)
+    
+    entities = dataset['entities']
+
+    samples = random.sample(entities, min(args.show_samples, len(entities)))
+    from kode_search.viewer import Viewer
+    Viewer(samples).run()
+
 
 # Parse functions and classes from the source code, and save them in a file.
 def parse(args):
     entities_file = os.path.join(args.repo_path, args.prefix + FILE_EXTENSIONS['parse'])
 
     if args.info:
-        _show_info(args, entities_file)
+        show_info(args, entities_file)
         return
     
     if args.show_samples > 0:
-        _show_samples(args, entities_file)
-        return
-
-    if args.generate_summary:
-        _generate_summaries(args, entities_file)
+        show_samples(args, entities_file)
         return
     
     if args.recreate:

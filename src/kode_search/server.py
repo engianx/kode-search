@@ -18,6 +18,7 @@ FAISS_INDEX = None
 ANNOY_INDEX = None
 INDEX_INFO = None
 FILE_URL_TEMPLATE = None
+INDEX_INFO_STR = None
 
 DISTANCE_THRESHOLD = 1.0
 
@@ -33,11 +34,12 @@ def ask():
 
 @app.route('/', methods=['GET'])
 def home():
-    return render_template('index.html', query="", results=None)
+    global INDEX_INFO_STR
+    return render_template('index.html', index_info=INDEX_INFO_STR, query="", results=None)
 
 @app.route('/search', methods=['GET'])
 def search():
-    global FILE_URL_TEMPLATE
+    global FILE_URL_TEMPLATE, DISTANCE_THRESHOLD, INDEX_INFO
 
     num_results = request.args.get('n')
     if num_results is None:
@@ -65,7 +67,7 @@ def search():
         for answer in answers:
             answer['file_url'] = _generate_file_url(answer['file'], answer['line'])
 
-    return render_template('index.html', query=query, results=answers)
+    return render_template('index.html', index_info=INDEX_INFO_STR, query=query, results=answers)
 
 def _generate_file_url(file, line):
     global FILE_URL_TEMPLATE
@@ -126,7 +128,7 @@ def _search(query, num_results, distance_threshold=DISTANCE_THRESHOLD):
     return answers
 
 def _load_index(args, index_file, index_info_file):
-    global FAISS_INDEX, ANNOY_INDEX, INDEX_INFO, FILE_URL_TEMPLATE
+    global FAISS_INDEX, ANNOY_INDEX, INDEX_INFO, FILE_URL_TEMPLATE, INDEX_INFO_STR
 
     validate_index(args, index_file, index_info_file)
 
@@ -143,6 +145,8 @@ def _load_index(args, index_file, index_info_file):
     else: # index_type == 'annoy'
         ANNOY_INDEX = AnnoyIndex(embedding_size, 'angular')
         ANNOY_INDEX.load(index_file)
+
+    INDEX_INFO_STR = '{}, {}, {}'.format(INDEX_INFO['model'], index_type, args.prefix)
 
     FILE_URL_TEMPLATE = args.file_url_template
 

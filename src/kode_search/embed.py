@@ -14,7 +14,7 @@ from kode_search.utils import ask_user_confirmation
 
 def get_embeddings(model_name, inputs, show_progress_bar=False, batch_size=1):
     # Load the model
-    model = SentenceTransformer(model_name)    
+    model = SentenceTransformer(model_name)
     return model.encode(inputs, show_progress_bar=show_progress_bar, batch_size=batch_size)
 
 def _show_samples(args, embeddings_file):
@@ -93,8 +93,7 @@ def _create_embeddings(args, entities_file, output_file):
 
 # Take the .parse intermediate file and generate embeddings for each entity
 # Save the embeddings in a file.
-def embed(args):
-    entities_file = os.path.join(args.repo_path, args.prefix + FILE_EXTENSIONS['parse'])
+def embed(args):        
     embeddings_file = os.path.join(args.repo_path, args.prefix + FILE_EXTENSIONS['embed'])
 
     if args.show_samples:
@@ -104,9 +103,16 @@ def embed(args):
     if args.info:
         _show_info(args, embeddings_file)
         return
-    
+
+    summary_file = os.path.join(args.repo_path, args.prefix + FILE_EXTENSIONS['summary'])
+    if args.embedding_type in ['summary', 'summary_and_code']:
+        input_file = summary_file
+    else:
+        # Generate embeddings from code using summary file as input if it exists, otherwise use the entity file
+        input_file = summary_file if os.path.exists(summary_file) else os.path.join(args.repo_path, args.prefix + FILE_EXTENSIONS['parse'])
+
     if args.run:
-        _create_embeddings(args, entities_file, embeddings_file)
+        _create_embeddings(args, input_file, embeddings_file)
         return
     
     print('No supported action specified, use one of the following options:')

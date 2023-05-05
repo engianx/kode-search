@@ -35,9 +35,8 @@ def main():
     parser.add_argument('--sampling', type=int, default=0,
                         help='Dry-run: sample a number of class and function only.')
 
-    # Summarization is considered as a part of the parsing process. Although it is an independent step.
-    # arguments for controlling summarizations by LLM
-    parser.add_argument('--generate-summary', action='store_true',
+    # Summarize the entities.
+    parser.add_argument('-m', '--summary', action='store_true',
                         default=False, help='Generate summary for the code.')
     parser.add_argument('--openai-api-retries', type=int, default=3,
                         help='Number of retries for OpenAI API calls.')
@@ -45,6 +44,7 @@ def main():
                         help='Threshold to be considered for summarization.')
     parser.add_argument('--threads', type=int, default=1,
                         help='Number of threads to be used for summarization.')
+    
     parser.add_argument('--recreate', action='store_true', default=False,
                         help='Recreate the entity file from exsiting one.')
 
@@ -71,6 +71,8 @@ def main():
                         help='Search code base.')
     parser.add_argument('--distance-threshold', type=float, default=0.5,
                         help='Similarity distance threshold for search. It may have different meaning for different indexes.')
+    parser.add_argument('--cuda-device', type=str, default='cuda:0',
+                        help='Cuda device to be used for searching.')
 
     # arguments for serving
     parser.add_argument('-x', '--server', action='store_true', default=False,
@@ -99,6 +101,9 @@ def main():
     if args.parse:
         from kode_search.parse import parse
         parse(args)
+    elif args.summary:
+        from kode_search.summary import summarize
+        summarize(args)
     elif args.embed:
         from kode_search.embed import embed
         embed(args)
