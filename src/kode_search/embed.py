@@ -1,21 +1,49 @@
 import logging
+import numpy
 import os
 import pickle
 import random
 import sys
+from tqdm import tqdm
+
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor
 
 from datetime import datetime
 from pprint import pprint
 
 from sentence_transformers import SentenceTransformer
 
-from kode_search.constants import FILE_EXTENSIONS
-from kode_search.utils import ask_user_confirmation
+from kode_search.constants import FILE_EXTENSIONS, EMBEDDING_MODELS
+from kode_search.utils import ask_user_confirmation, openai_embed_content
 
-def get_embeddings(model_name, inputs, show_progress_bar=False, batch_size=1):
-    # Load the model
-    model = SentenceTransformer(model_name)
-    return model.encode(inputs, show_progress_bar=show_progress_bar, batch_size=batch_size)
+def get_embeddings(model_name, inputs, show_progress_bar=False, batch_size=1, threads=1):
+    """
+    Get embeddings for a list of inputs. Returns a list of numpy array of embeddings.
+    """
+    if model_name == 'openai':
+        if threads == 1: # special case when serving queries.
+            embeddings = openai_embed_content(inputs)
+            # the shape of embeddings is (#inputs, #embedding_size)
+            return numpy.array(embeddings, dtype=numpy.float32)
+        else:
+            logging.info('Using {} threads to generate embeddings...'.format(threads))
+            with ThreadPoolExecutor(max_workers=threads) as t:
+                embeddings = list(tqdm(t.map(openai_embed_content, inputs, chunksize=batch_size), total=len(inputs)))  
+            # the shape of embeddings is (#inputs, 1, #embedding_size)
+            # we need to remove the middle dimension
+            # and convert the list to numpy array
+            # so the shape becomes (#inputs, #embedding_size)
+            # and the type is numpy.float32
+            return numpy.squeeze(numpy.array(embeddings, dtype=numpy.float32), axis=1)     
+    else:
+        # Load the model
+        model = SentenceTransformer(EMBEDDING_MODELS[model_name])
+        # Encode returns numpy already.
+        return model.encode(inputs, 
+                            convert_to_numpy=True,
+                            show_progress_bar=show_progress_bar,
+                            batch_size=batch_size)
 
 def _show_samples(args, embeddings_file):
     if not os.path.exists(embeddings_file):
@@ -64,9 +92,16 @@ def _generate_embeddings(args, entities):
         logging.critical('Unsupported embedding type: {}'.format(args.embedding_type))
         sys.exit(1)
 
-    # Generate the embeddings
-    embeddings = get_embeddings(args.model, embedding_input, show_progress_bar=True, batch_size=args.embedding_batch_size)
+    if args.model_name == 'openai':
+        if not ask_user_confirmation("This step costs $$$, are you sure to continue?"):
+            sys.exit(0)
 
+    # Generate the embeddings
+    embeddings = get_embeddings(args.model_name,
+                                embedding_input,
+                                show_progress_bar=True,
+                                batch_size=args.embedding_batch_size,
+                                threads=args.threads)
     return embeddings
 
 def _create_embeddings(args, entities_file, output_file):
@@ -79,7 +114,7 @@ def _create_embeddings(args, entities_file, output_file):
 
     dataset = {
         'repo': entity_dataset['repo'],
-        'model': args.model,
+        'model': args.model_name,
         'type' : args.embedding_type,
         'creation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'entities': entity_dataset['entities'],

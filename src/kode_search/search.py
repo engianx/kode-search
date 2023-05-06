@@ -7,11 +7,11 @@ import sys
 import numpy as np
 
 from annoy import AnnoyIndex
-from sentence_transformers import SentenceTransformer
 from kode_search.index import validate_index
 from kode_search.embed import get_embeddings
 
 from kode_search.constants import FILE_EXTENSIONS
+from kode_search.utils import ask_user_confirmation
 
 # Expose the function to be used by the server.
 # It takes a query, returns a list of entities.

@@ -6,14 +6,15 @@ import logging
 import os
 import pickle
 import random
+import sys
 
 from annoy import AnnoyIndex
 
-from kode_search.constants import FILE_EXTENSIONS
+from kode_search.constants import FILE_EXTENSIONS, URL_TEMPLATES
 from kode_search.index import validate_index
 from kode_search.search import kode_search
+from kode_search.utils import ask_user_confirmation
 
-# 
 FAISS_INDEX = None
 ANNOY_INDEX = None
 INDEX_INFO = None
@@ -53,15 +54,16 @@ def search():
     else:
         distance_threshold = DISTANCE_THRESHOLD
 
+    dev_mode = request.args.get('dev') is not None
     query = request.args.get('query')
     if query is None or query.strip() == '':
         # Show some random samples.
-        answers = _get_random_samples(num_results)
+        answers = _get_random_samples(num_results, dev_mode=dev_mode)
         query = "I'm Feeling Lucky" # placeholder
     else:
         # Perform actual search.
         query = query.strip()
-        answers = _search(query, num_results, distance_threshold)
+        answers = _search(query, num_results, distance_threshold, dev_mode=dev_mode)
 
     if FILE_URL_TEMPLATE is not None:
         for answer in answers:
@@ -71,13 +73,13 @@ def search():
 
 def _generate_file_url(file, line):
     global FILE_URL_TEMPLATE
-
+    
     # TODO: the file URL pattern should be configurable.
     # The file name may start with ./ or ../, which we need to remove.
     file = file.lstrip('./')
     return FILE_URL_TEMPLATE.format(file=file, line=line)
 
-def _get_random_samples(num_results):
+def _get_random_samples(num_results, dev_mode=False):
     global INDEX_INFO
     samples = [e for e in random.sample(INDEX_INFO['entities'], num_results)]
     answers = []
@@ -87,13 +89,14 @@ def _get_random_samples(num_results):
             'line': sample['start_line'],
             'content_type': sample['content_type'],
             'content': sample['content'],
-            'summary': html.escape(sample['summary']) if 'summary' in sample else '',
-            'distance': 0.0,
         }
+        if dev_mode:
+            answer['summary'] = html.escape(r['summary']) if 'summary' in r else '',
+            answer['distance'] = 0.0,
         answers.append(answer)
     return answers
 
-def _search(query, num_results, distance_threshold=DISTANCE_THRESHOLD):
+def _search(query, num_results, distance_threshold=DISTANCE_THRESHOLD, dev_mode=False):
     global FAISS_INDEX, ANNOY_INDEX, INDEX_INFO
 
     logging.info('Searching for: {}'.format(query))
@@ -120,9 +123,11 @@ def _search(query, num_results, distance_threshold=DISTANCE_THRESHOLD):
             'line': r['start_line'],
             'content_type': r['content_type'],
             'content': r['content'],
-            'summary': html.escape(r['summary']) if 'summary' in r else '',
-            'distance': distances[i],
         }
+
+        if dev_mode:
+            answer['summary'] = html.escape(r['summary']) if 'summary' in r else '',
+            answer['distance'] = distances[i],
         answers.append(answer)
 
     return answers
@@ -136,7 +141,11 @@ def _load_index(args, index_file, index_info_file):
 
     with args._open(index_info_file, 'rb') as f:
         INDEX_INFO = pickle.load(f)
-    
+
+    if INDEX_INFO['model'] == 'openai' and not args.auto_confirm:
+        if not ask_user_confirmation("This step costs $$$, are you sure to continue?"):
+            sys.exit(0)
+
     index_type = INDEX_INFO['index_type']
     embedding_size = INDEX_INFO['embedding_size']
 
@@ -148,7 +157,8 @@ def _load_index(args, index_file, index_info_file):
 
     INDEX_INFO_STR = '{}, {}, {}'.format(INDEX_INFO['model'], index_type, args.prefix)
 
-    FILE_URL_TEMPLATE = args.file_url_template
+    if args.url_tpl in URL_TEMPLATES:
+        FILE_URL_TEMPLATE = URL_TEMPLATES[args.url_tpl]
 
     # warm up
     _search('warm up', 1)

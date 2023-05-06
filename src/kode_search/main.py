@@ -38,11 +38,7 @@ def main():
     # Summarize the entities.
     parser.add_argument('-m', '--summary', action='store_true',
                         default=False, help='Generate summary for the code.')
-    parser.add_argument('--openai-api-retries', type=int, default=3,
-                        help='Number of retries for OpenAI API calls.')
-    parser.add_argument('--code-lines-threshold', type=int, default=10,
-                        help='Threshold to be considered for summarization.')
-    parser.add_argument('--threads', type=int, default=1,
+    parser.add_argument('--threads', type=int, default=8,
                         help='Number of threads to be used for summarization.')
     
     parser.add_argument('--recreate', action='store_true', default=False,
@@ -51,7 +47,7 @@ def main():
     # arguments for creating embeddings
     parser.add_argument('-e', '--embed', action='store_true', default=False,
                         help='Create embeddings for the code.')
-    parser.add_argument('--model', metavar='MODEL', type=str, default='all-mpnet-base-v2',
+    parser.add_argument('--model-name', metavar='MODEL', type=str, default='mpnet',
                         help='Embedding model to be used.')
     parser.add_argument('--embedding-type', choices=['summary', 'code', 'summary_and_code'], default='summary',
                         help='Type of the embedding.')
@@ -79,8 +75,10 @@ def main():
                         help='Start the server.')
     parser.add_argument('--port', type=int, default=5000,
                         help='Port to run the server on.')
-    parser.add_argument('--file-url-template', type=str, default='https://cs.android.com/android/platform/superproject/+/master:art/{file};l={line}',
-                        help='URL template for the link to result file path.')
+    parser.add_argument('--url-tpl', type=str, default=None,
+                        help='URL template name for the link to result file path.')
+    parser.add_argument('--auto-confirm', action='store_true', default=False,
+                        help='Auto confirm the prompt, for auto start the server.')
 
     # arguments for searching
     parser.add_argument('query', nargs=argparse.REMAINDER, metavar='ARGS',

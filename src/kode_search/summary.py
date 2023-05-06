@@ -1,83 +1,20 @@
-import openai
 import os
 import sys
-import time
 import logging
 import pickle
 import shutil
 from tqdm import tqdm
 
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
 
 from kode_search.constants import FILE_EXTENSIONS
-from kode_search.utils import ask_user_confirmation, num_tokens_from_messages
+from kode_search.utils import ask_user_confirmation, openai_summarize_code
 from kode_search.parse import show_info, show_samples
 
-# GPT api parameters
-GPT_MODEL = 'gpt-3.5-turbo'
-GPT_MAX_TOKENS = 3068 # leave 1024 tokens for the response. 4096 is the max token length for gpt-3.5-turbo
-
-# call openai chat completion api with back-off
-# returns a json string if successful, otherwise None
-def _get_code_summary(args, code): 
-    # If the code is too short, we don't need to summarize it
-    if code.count('\n') < args.code_lines_threshold:
-        logging.debug('Code is too short to summarize.')
-        return ""
-    
-    # GPT chat completion api prompt.
-    prompt_template = """What is the purpose of the following code and how does it achieve its objective? What are search keywords from the code?
-
-    ```
-    {}
-    ```
-    """
-    
-    prompt = prompt_template.format(code)
-    messages = [{"role": "user", "content": prompt}]
-
-    # check if the message is too long
-    num_tokens = num_tokens_from_messages(messages)
-    while num_tokens > GPT_MAX_TOKENS:
-        logging.debug('Code is too long, removing some lines. {} tokens > {} tokens'.format(num_tokens, GPT_MAX_TOKENS))
-        # estimate how many lines we should remove
-        percent = GPT_MAX_TOKENS / num_tokens
-        splitted_code_lines = code.split('\n')
-        num_lines = int(len(splitted_code_lines) * percent)
-        code = '\n'.join(splitted_code_lines[:num_lines])
-
-        prompt = prompt_template.format(code)
-        messages = [{"role": "user", "content": prompt}]
-        num_tokens = num_tokens_from_messages(messages)
-
-    # if the final message is too small, we don't need to summarize it
-    if code.count('\n') < args.code_lines_threshold:
-        logging.debug('Code is too short to summarize.')
-        return None
-
-    # Call openai API with exponential back-off
-    try_count = 0
-    while try_count < args.openai_api_retries:
-        try_count += 1
-        try:
-            response = openai.ChatCompletion.create(
-                model=GPT_MODEL,
-                messages=messages,
-                temperature=0,
-            )
-            return response.choices[0].message["content"]
-        except Exception as e:
-            logging.warning('GPT API Error: {}'.format(e))
-            time.sleep(2**try_count)
-
-    logging.error('Failed to get summary from GPT API after retrying.')
-    return None
-
 # Single thread version of summarizing entities
-def _summarized_entity(args, entity):     
+def _summarized_entity(entity):     
     if entity['content_type'] == 'code':
-        summary = _get_code_summary(args, entity['content'])
+        summary = openai_summarize_code(entity['content'])
         if summary is not None:
             entity['summary'] = summary
 
@@ -126,7 +63,7 @@ def _generate_summaries(args, entities_file, output_file):
         # Multi-thread version
         logging.info('Using {} threads to generate summaries...'.format(args.threads))
         with ThreadPoolExecutor(max_workers=args.threads) as t:
-            _ = list(tqdm(t.map(partial(_summarized_entity, args), entities), total=len(entities)))
+            _ = list(tqdm(t.map(_summarized_entity, entities), total=len(entities)))
     else:
         for entity in tqdm(entities):
             _summarized_entity(args, entity)

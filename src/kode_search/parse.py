@@ -12,7 +12,6 @@ from tree_sitter_languages import get_parser
 from tqdm import tqdm
 
 from kode_search.constants import FILE_EXTENSIONS
-from kode_search.utils import ask_user_confirmation, num_tokens_from_messages
 
 SUPPORTED_FILE_EXTENSIONS = {
     '.c': 'c',
@@ -28,19 +27,9 @@ SUPPORTED_FILE_EXTENSIONS = {
 }
 
 EXCLUDED_FILE_PATTERNS = [
-    '*_test.h',
-    '*_test.cc',
-    '*_test.cpp',
-    '*_test.hpp',
-    '*_test.go',
-    '*Test.java',
-    '*_test.js',
-    '*_test.ts',
-    '*test.py',
-    '*/test/*',
-    '*/tests/*',
-    '*/testing/*',
-    '*/__tests__/*',
+    '*test*',
+    '*Test*',
+    '*/.*', # hidden files
 ]
 
 # Language specific node types to extract
@@ -62,7 +51,7 @@ def _get_language(source_file):
 
 def _get_source_files_from_git_repo(repo_path):
     try:
-        repo = git.Repo(repo_path, search_parent_directories=True)
+        repo = git.Repo(repo_path, search_parent_directories=False)
         # Get source code files of supported types from the git repo
         source_code_files = []
         for file in repo.git.ls_files().split('\n'):
@@ -106,13 +95,10 @@ def _traverse_tree(tree):
 # Customization code
 def _filter_node(node, source_file, source_code):
     lang = _get_language(source_file)
-    if lang == 'cpp':
-        # class_specifier, struct_specifier without body are not real classes
-        if node.type == 'class_specifier' or node.type == 'struct_specifier':
-            return node.start_point[0] == node.end_point[0]
+    return node.start_point[0] == node.end_point[0]
 
-    return False
-
+# Cap the content length to 32KB, roughly 8K tokens, that's text-embedding-ada-002's limit.
+CONTENT_LENGTH_CAP = 32 * 1024 # 32KB
 # Extract functions and classes from the source code
 def _extract_entities(tree, source_file, source_code):
     entities = []
@@ -134,12 +120,16 @@ def _extract_entities(tree, source_file, source_code):
         #   'content': 'class Foo { ... }', can also be comments, etc.
         # }
         # In the summary generation step, it will add 'summary' field to the entity for 'code' type text.
+
+        # Cap the content length to 16KB, roughly 4K tokens
+        content_end = min(node.end_byte, node.start_byte + CONTENT_LENGTH_CAP)
+
         entities.append({
             'file': source_file,
             'start_line': node.start_point[0],
             'end_line': node.end_point[0],
             'content_type': 'code', # or 'text'
-            'content': source_code[node.start_byte:node.end_byte],
+            'content': source_code[node.start_byte:content_end],
         })
     return entities
 
@@ -159,10 +149,10 @@ def _parse_source_code(args, output_file):
     entities = []
     # Load the parser for the language, and parse the source code
     for source_file in tqdm(source_files):
-        with open(source_file, 'r') as f:
-            source_code = f.read()
-        parser = get_parser(_get_language(source_file))
         try:
+            with open(source_file, 'r') as f:
+                source_code = f.read()
+            parser = get_parser(_get_language(source_file))
             tree = parser.parse(bytes(source_code, 'utf8'))
         except UnicodeDecodeError:
             logging.error('UnicodeDecodeError when parsing {}'.format(source_file))
@@ -228,7 +218,7 @@ def show_info(args, entities_file):
     print('Number of summaries:\t{}'.format(sum(1 for e in entities if 'summary' in e)))
     
     # Bucket the code length into different ranges
-    bucket_size = 1000
+    bucket_size = 1024
     max_code_length = max([len(entity['content']) for entity in entities])
     buckets = [0] * (max_code_length // bucket_size + 1)
     for entity in entities:
@@ -236,8 +226,6 @@ def show_info(args, entities_file):
     print('Code length distribution:')
     print('Length\tCount')
     for i, count in enumerate(buckets):
-        if count == 0:
-            continue
         print('{}-{}\t\t{}'.format(i * bucket_size, (i+1)*bucket_size, count))
 
 # Show some samples of the parsed entities
